@@ -1047,16 +1047,12 @@ async def stopallspam_command(client, message: Message):
 
 # ================= НОВЫЕ КОМАНДЫ =================
 
-# 10. Тегирование всех (обновленный)
+# 10. Тегирование всех
 @app.on_message(filters.command("all", prefixes="/") & filters.user(SUDO_USERS))
 async def all_command(client, message: Message):
-    """Тегирование всех участников чата (с username или ссылкой)"""
+    """Тегирование всех участников чата"""
     if not message.chat:
         await message.edit_text("❌ Эта команда работает только в группах!")
-        return
-    
-    if not message.chat.username and not message.chat.id:
-        await message.edit_text("❌ Не удалось определить чат!")
         return
     
     text = message.text.split("/all", 1)[1].strip() if "/all" in message.text else "Внимание!"
@@ -1076,8 +1072,7 @@ async def all_command(client, message: Message):
                     members.append(f"[{member.user.first_name}](tg://user?id={member.user.id})")
                 else:
                     members.append(f"[Пользователь](tg://user?id={member.user.id})")
-            except Exception as e:
-                logger.warning(f"Не удалось добавить участника: {e}")
+            except:
                 continue
         
         if not members:
@@ -1114,13 +1109,10 @@ async def all_command(client, message: Message):
 # 11. Погода
 @app.on_message(filters.command("weather", prefixes="/") & filters.user(SUDO_USERS))
 async def weather_command(client, message: Message):
-    """Узнать погоду в городе"""
     city = message.text.split("/weather", 1)[1].strip() if "/weather" in message.text else None
-    
     if not city:
         await message.edit_text("❌ Укажи город!\nПример: `/weather Москва`")
         return
-    
     await message.edit_text("⏳ Получаю погоду...")
     result = await get_weather(city)
     await message.edit_text(result)
@@ -1128,16 +1120,12 @@ async def weather_command(client, message: Message):
 # 12. Курс валют
 @app.on_message(filters.command("currency", prefixes="/") & filters.user(SUDO_USERS))
 async def currency_command(client, message: Message):
-    """Узнать курс валют"""
     args = message.text.split("/currency", 1)[1].strip().split() if "/currency" in message.text else []
-    
     if len(args) < 2:
         await message.edit_text("❌ Укажи валюты!\nПример: `/currency USD RUB`")
         return
-    
     from_currency = args[0].upper()
     to_currency = args[1].upper()
-    
     await message.edit_text("⏳ Получаю курс...")
     result = await get_exchange_rate(from_currency, to_currency)
     await message.edit_text(result)
@@ -1145,32 +1133,25 @@ async def currency_command(client, message: Message):
 # 13. Переводчик
 @app.on_message(filters.command("translate", prefixes="/") & filters.user(SUDO_USERS))
 async def translate_command(client, message: Message):
-    """Перевести текст на другой язык"""
     args = message.text.split("/translate", 1)[1].strip().split(" ", 1) if "/translate" in message.text else []
-    
     if len(args) < 2:
         await message.edit_text("❌ Укажи язык и текст!\nПример: `/translate en Привет мир!`")
         return
-    
     target_lang = args[0].strip()
     text = args[1].strip()
-    
     if not text:
         await message.edit_text("❌ Напиши текст для перевода!")
         return
-    
     await message.edit_text("⏳ Перевожу...")
     result = await translate_text(text, target_lang)
     await message.edit_text(result)
 
-# 14. Распознавание текста с фото (OCR)
+# 14. OCR
 @app.on_message(filters.command("ocr", prefixes="/") & filters.user(SUDO_USERS))
 async def ocr_command(client, message: Message):
-    """Распознать текст с фото"""
     if not message.reply_to_message or not message.reply_to_message.photo:
         await message.edit_text("❌ Ответь на сообщение с фото!\nПример: ответь на фото и напиши `/ocr`")
         return
-    
     await message.edit_text("📷 Распознаю текст...")
     result = await ocr_image(client, message)
     await message.edit_text(result)
@@ -1179,20 +1160,17 @@ async def ocr_command(client, message: Message):
 
 @app.on_message(filters.command("bb", prefixes="/") & filters.user(SUDO_USERS))
 async def bb_command(client, message: Message):
-    """Открыть меню автобанка"""
     await bb_menu(client, message, edit=False)
 
 async def bb_menu(client, message: Message, edit: bool = False):
     text = (f"💎 **Автобанки**\n"
             f"Статус: {'❤️‍🩹 Запущен' if autobanki.running else '💤 Остановлен'}\n"
             f"Режим: {'🍺 Банки' if autobanki.mode == 'banks' else '🎖️ Рейтинг'}")
-    
     keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton("🍺 Банки", callback_data="bb_banks"),
          InlineKeyboardButton("🎖️ Рейтинг", callback_data="bb_rating")],
         [InlineKeyboardButton("❌ Закрыть", callback_data="close")]
     ])
-    
     if edit:
         await message.edit(text, reply_markup=keyboard)
     else:
@@ -1205,7 +1183,6 @@ async def setbanklimit_command(client, message: Message):
         limit_display = "Без лимита" if autobanki.bank_purchase_limit_caps is None else f"{autobanki.bank_purchase_limit_caps:,}".replace(",", " ")
         await message.edit_text(f"Текущий лимит: {limit_display} крышек.\nИспользуйте: /setbanklimit <количество> или /setbanklimit 0 для снятия")
         return
-    
     arg = args[1].strip()
     if arg.lower() in ["0", "nolimit"]:
         autobanki.bank_purchase_limit_caps = None
@@ -1226,7 +1203,6 @@ async def start_autobanki(client, message: Message):
     if autobanki.running:
         await message.edit_text("⚠️ Автобанки уже запущены!")
         return
-    
     autobanki.running = True
     autobanki.mode = "banks"
     autobanki.task = asyncio.create_task(autobanki.worker(client, message.from_user.id))
@@ -1237,7 +1213,6 @@ async def stop_autobanki(client, message: Message):
     if not autobanki.running:
         await message.edit_text("⚠️ Автобанки не запущены!")
         return
-    
     autobanki.running = False
     if autobanki.task:
         autobanki.task.cancel()
@@ -1253,7 +1228,6 @@ async def b_command(client, message: Message):
 
 @app.on_message(filters.command("minfo", prefixes="/") & filters.user(SUDO_USERS))
 async def minfo_command(client, message: Message):
-    """Статус модуля BFGBunker"""
     text = (
         f"💡 **Статус модуля BFGBunker**\n\n"
         f"🔧 **Основные функции:**\n"
@@ -1277,11 +1251,9 @@ async def minfo_command(client, message: Message):
 async def max_command(client, message: Message):
     await message.edit_text("⏳ Получаю данные...")
     info = await bfgbunker.get_bunker_info(client)
-    
     caps = {}
     found = 0
     current_people = "?"
-    
     for i in range(len(bfgbunker.room_names)):
         patterns = [
             rf"{i+1}[^\d]*?{bfgbunker.room_names[i]}[^\d]*?(\d+)\s*ур\b",
@@ -1296,25 +1268,19 @@ async def max_command(client, message: Message):
         if lvl:
             found += 1
             caps[f"K{i+1}"] = (lvl - 1) * 2 + bfgbunker.base_caps[i]
-    
     if not caps:
         await message.edit_text("❌ Не удалось получить данные о бункере")
         return
-    
     current_people_match = re.search(r"🧍 Людей в бункере: (\d+)", info)
     if current_people_match:
         current_people = current_people_match.group(1)
-    
     min_cap = min(caps.values()) if caps else 0
-    
     result = f"❓ **Вместимость бункера**\n\n"
     for room, cap in sorted(caps.items(), key=lambda x: int(x[0][1:])):
         result += f"🔵 {room} - {cap} чел.\n"
-    
     result += f"\n👤 Чел сейчас: {current_people}\n"
     result += f"📊 Макс. вместимость: {min_cap} чел.\n"
     result += f"🍔 Комнат открыто: {found}/{len(bfgbunker.room_names)}"
-    
     await message.edit_text(result)
 
 # ================= КОМАНДЫ BUNKERMINE =================
@@ -1326,7 +1292,6 @@ async def bmine_command(client, message: Message):
 async def bmine_menu(client, message: Message, edit: bool = False):
     mine_status = "✅" if bunkermine.mine_active else "❌"
     fuel_status = "✅" if bunkermine.fuel_active else "❌"
-    
     text = (
         f"🎮 **Панель управления**\n\n"
         f"⛽ Бензин: {fuel_status}\n"
@@ -1335,7 +1300,6 @@ async def bmine_menu(client, message: Message, edit: bool = False):
         f"📊 Порог бензина: {bunkermine.fuel_threshold}%\n"
         f"⏱ Интервал бензина: {bunkermine.fuel_delay} мин"
     )
-    
     keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton(f"{'✅' if bunkermine.fuel_active else '❌'} Бензин", callback_data="mine_fuel_toggle")],
         [InlineKeyboardButton(f"{'✅' if bunkermine.mine_active else '❌'} Авто-починка", callback_data="mine_toggle")],
@@ -1344,7 +1308,6 @@ async def bmine_menu(client, message: Message, edit: bool = False):
         [InlineKeyboardButton("📊 Порог бензина", callback_data="mine_threshold")],
         [InlineKeyboardButton("❌ Закрыть", callback_data="close")]
     ])
-    
     if edit:
         await message.edit(text, reply_markup=keyboard)
     else:
@@ -1650,9 +1613,5 @@ if __name__ == "__main__":
     print("   /repair_on/off - Авто-починка шахты")
     print("   /fuel_mine_on/off - Автобензин в шахте")
     
-    # БЕРЁМ НОМЕР ИЗ ПЕРЕМЕННОЙ ОКРУЖЕНИЯ
-    phone = os.getenv("PHONE_NUMBER")
-    if phone:
-        app.run(phone_number=phone)
-    else:
-        app.run(phone_number="+79521742514")
+    # ЗАПУСК БЕЗ phone_number (будет запрошен в консоли, но на Railway не работает)
+    app.run()
