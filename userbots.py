@@ -1649,4 +1649,10 @@ if __name__ == "__main__":
     print("   /bmine - Панель управления шахтой")
     print("   /repair_on/off - Авто-починка шахты")
     print("   /fuel_mine_on/off - Автобензин в шахте")
-    app.run()
+    
+    # БЕРЁМ НОМЕР ИЗ ПЕРЕМЕННОЙ ОКРУЖЕНИЯ
+    phone = os.getenv("PHONE_NUMBER")
+    if phone:
+        app.run(phone_number=phone)
+    else:
+        app.run()
