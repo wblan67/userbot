@@ -12,7 +12,7 @@ from datetime import datetime
 from typing import Optional, Dict, List, Any
 from pyrogram import Client, filters
 from pyrogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
-from googletrans import Translator
+from deep_translator import GoogleTranslator
 import pytesseract
 from PIL import Image, ImageDraw, ImageFont
 import io
@@ -37,11 +37,46 @@ app = Client("my_userbot", api_id=API_ID, api_hash=API_HASH, in_memory=False)
 user_data = {}
 bot_data = {}
 
-# ================= ИНИЦИАЛИЗАЦИЯ =================
-translator = Translator()
+# ================= УПРАВЛЕНИЕ СПАМОМ =================
 
-# Для Windows (если не работает OCR)
-# pytesseract.pytesseract.tesseract_cmd = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
+# Хранилище активных спам-задач
+active_spams = {}
+spam_counter = 0
+
+class SpamTask:
+    def __init__(self, task_id, client, chat_id, text, delay, total_count, reply_to_message=None):
+        self.id = task_id
+        self.client = client
+        self.chat_id = chat_id
+        self.text = text
+        self.delay = delay
+        self.total = total_count
+        self.sent = 0
+        self.running = True
+        self.reply_to_message = reply_to_message
+        self.start_time = time.time()
+        self.task = None
+
+    async def run(self):
+        while self.running and self.sent < self.total:
+            try:
+                if self.reply_to_message:
+                    await self.client.send_message(
+                        self.chat_id,
+                        self.text,
+                        reply_to_message_id=self.reply_to_message.id
+                    )
+                else:
+                    await self.client.send_message(self.chat_id, self.text)
+                
+                self.sent += 1
+                await asyncio.sleep(self.delay)
+            except Exception as e:
+                logger.error(f"Ошибка спама #{self.id}: {e}")
+                break
+        
+        if self.sent >= self.total:
+            self.running = False
 
 # ================= ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ =================
 
@@ -76,7 +111,7 @@ async def get_weather(city: str) -> str:
                     data = await response.text()
                     parts = data.strip().split()
                     if len(parts) < 4:
-                        return f"❌ Не удалось получить погоду para '{city}'"
+                        return f"❌ Не удалось получить погоду для '{city}'"
                     description = " ".join(parts[:-3])
                     temp = parts[-3]
                     wind = parts[-2]
@@ -143,11 +178,11 @@ async def get_exchange_rate(from_currency: str, to_currency: str) -> str:
 async def translate_text(text: str, target_lang: str) -> str:
     """Переводит текст на указанный язык"""
     try:
-        translated = translator.translate(text, dest=target_lang)
+        translated = GoogleTranslator(source='auto', target=target_lang).translate(text)
         return (
             f"🌐 **Перевод**\n\n"
             f"📝 **Оригинал:** {text}\n"
-            f"✅ **Перевод ({target_lang.upper()}):** {translated.text}"
+            f"✅ **Перевод ({target_lang.upper()}):** {translated}"
         )
     except Exception as e:
         return f"❌ Ошибка перевода: {e}"
@@ -759,9 +794,13 @@ async def calc_command(client, message: Message):
     except Exception as e:
         await message.edit_text(f"❌ Ошибка: {e}")
 
-# 5. Спам
+# ================= КОМАНДЫ СПАМА =================
+
+# 5. Спам с управлением
 @app.on_message(filters.command("spam", prefixes="/") & filters.user(SUDO_USERS))
 async def spam_command(client, message: Message):
+    global spam_counter, active_spams
+    
     try:
         parts = message.text.split("/spam", 1)[1].strip()
         args = parts.rsplit(" ", 2)
@@ -792,27 +831,33 @@ async def spam_command(client, message: Message):
             await message.edit_text("❌ Задержка и количество должны быть больше 0!")
             return
         
-        await message.edit_text("✅ Принято!")
-        await asyncio.sleep(1)
-        await message.delete()
+        spam_counter += 1
+        task_id = spam_counter
         
-        for i in range(count):
-            try:
-                if message.reply_to_message:
-                    await message.reply_to_message.reply(text_to_spam)
-                else:
-                    await client.send_message(
-                        chat_id=message.chat.id,
-                        text=text_to_spam
-                    )
-                await asyncio.sleep(delay)
-            except Exception as e:
-                logging.error(f"Ошибка при спаме: {e}")
-                await client.send_message(
-                    chat_id=message.chat.id,
-                    text=f"❌ Ошибка: {e}"
-                )
-                break
+        spam_task = SpamTask(
+            task_id=task_id,
+            client=client,
+            chat_id=message.chat.id,
+            text=text_to_spam,
+            delay=delay,
+            total_count=count,
+            reply_to_message=message.reply_to_message
+        )
+        
+        active_spams[task_id] = spam_task
+        spam_task.task = asyncio.create_task(spam_task.run())
+        
+        chat_name = message.chat.title or "личка"
+        
+        await message.edit_text(
+            f"✅ **Спам запущен!**\n\n"
+            f"🆔 **Номер спама:** `{task_id}`\n"
+            f"📝 **Текст:** {text_to_spam}\n"
+            f"⏱️ **Задержка:** {delay} сек.\n"
+            f"🔢 **Всего:** {count}\n"
+            f"💬 **Чат:** {chat_name}\n\n"
+            f"🛑 `/stopspam {task_id}`"
+        )
         
     except ValueError:
         await message.edit_text(
@@ -825,18 +870,22 @@ async def spam_command(client, message: Message):
     except Exception as e:
         await message.edit_text(f"❌ Ошибка: {e}")
 
-# 6. Хард спам
+# 6. Хард спам с управлением
 @app.on_message(filters.command("hspam", prefixes="/") & filters.user(SUDO_USERS))
 async def hspam_command(client, message: Message):
+    global spam_counter, active_spams
+    
     try:
         parts = message.text.split("/hspam", 1)[1].strip()
         args = parts.rsplit(" ", 1)
         
         if len(args) < 2:
             await message.edit_text(
-                "Ошибка!\n\n"
-                "Использование: /hspam сообщение кол-во\n"
-                "Задержка: 0.1 секунды"
+                "❌ Ошибка в параметрах!\n\n"
+                "📝 Использование: /hspam сообщение кол-во\n"
+                "⏱️ Задержка: 0.1 секунды\n"
+                "🔢 Кол-во: целое число\n\n"
+                "Пример: /hspam Привет всем! 10"
             )
             return
         
@@ -851,45 +900,163 @@ async def hspam_command(client, message: Message):
             await message.edit_text("❌ Количество должно быть больше 0!")
             return
         
-        await message.edit_text(f"⚡ **Хард спам принят!**\n\n📝 **Текст:** {text_to_spam}\n🔢 **Кол-во:** {count}\n⏱️ **Задержка:** 0.1 сек.\n🔄 **Начинаю...**")
-        await asyncio.sleep(0.5)
-        await message.delete()
+        spam_counter += 1
+        task_id = spam_counter
         
-        for i in range(count):
-            try:
-                if message.reply_to_message:
-                    await message.reply_to_message.reply(text_to_spam)
-                else:
-                    await client.send_message(
-                        chat_id=message.chat.id,
-                        text=text_to_spam
-                    )
-                await asyncio.sleep(0.1)
-            except Exception as e:
-                logging.error(f"Ошибка при хард спаме: {e}")
-                await client.send_message(
-                    chat_id=message.chat.id,
-                    text=f"❌ Ошибка: {e}"
-                )
-                break
+        spam_task = SpamTask(
+            task_id=task_id,
+            client=client,
+            chat_id=message.chat.id,
+            text=text_to_spam,
+            delay=0.1,
+            total_count=count,
+            reply_to_message=message.reply_to_message
+        )
+        
+        active_spams[task_id] = spam_task
+        spam_task.task = asyncio.create_task(spam_task.run())
+        
+        chat_name = message.chat.title or "личка"
+        
+        await message.edit_text(
+            f"⚡ **Хард спам запущен!**\n\n"
+            f"🆔 **Номер спама:** `{task_id}`\n"
+            f"📝 **Текст:** {text_to_spam}\n"
+            f"⏱️ **Задержка:** 0.1 сек.\n"
+            f"🔢 **Всего:** {count}\n"
+            f"💬 **Чат:** {chat_name}\n\n"
+            f"🛑 `/stopspam {task_id}`"
+        )
         
     except ValueError:
         await message.edit_text(
-            "Ошибка!\n\n"
-            "Использование: /hspam сообщение кол-во\n"
-            "Задержка: 0.1 секунды"
+            "❌ Ошибка в параметрах!\n\n"
+            "📝 Использование: /hspam сообщение кол-во\n"
+            "⏱️ Задержка: 0.1 секунды\n\n"
+            "Пример: /hspam Привет всем! 10"
         )
     except Exception as e:
         await message.edit_text(f"❌ Ошибка: {e}")
 
+# 7. Информация о спаме
+@app.on_message(filters.command("spaminfo", prefixes="/") & filters.user(SUDO_USERS))
+async def spaminfo_command(client, message: Message):
+    """Показать информацию о активных спамах"""
+    if not active_spams:
+        await message.edit_text("❌ Нет активных спам-задач.")
+        return
+    
+    text = "📊 **Активные спам-задачи:**\n\n"
+    found = False
+    
+    for task_id, task in active_spams.items():
+        if not task.running:
+            continue
+        
+        found = True
+        chat_name = "личка"
+        try:
+            chat = await client.get_chat(task.chat_id)
+            chat_name = chat.title or "личка"
+        except:
+            pass
+        
+        remaining = task.total - task.sent
+        elapsed = int(time.time() - task.start_time)
+        minutes = elapsed // 60
+        seconds = elapsed % 60
+        
+        text += (
+            f"🆔 **#{task_id}**\n"
+            f"📝 Текст: `{task.text[:30]}{'...' if len(task.text) > 30 else ''}`\n"
+            f"📤 Отправлено: {task.sent}/{task.total}\n"
+            f"⏳ Осталось: **{remaining}**\n"
+            f"⏱️ Задержка: {task.delay} сек.\n"
+            f"💬 Чат: {chat_name}\n"
+            f"🕐 Время: {minutes}м {seconds}с\n"
+            f"🛑 `/stopspam {task_id}`\n\n"
+        )
+    
+    if not found:
+        await message.edit_text("❌ Нет активных спам-задач.")
+        return
+    
+    await message.edit_text(text)
+
+# 8. Остановка спама по номеру
+@app.on_message(filters.command("stopspam", prefixes="/") & filters.user(SUDO_USERS))
+async def stopspam_command(client, message: Message):
+    """Остановить спам по номеру"""
+    args = message.text.split("/stopspam", 1)[1].strip() if "/stopspam" in message.text else None
+    
+    if not args:
+        await message.edit_text(
+            "❌ Укажи номер спама!\n\n"
+            "📝 Использование: `/stopspam [номер]`\n"
+            "📌 Номер можно узнать через `/spaminfo`"
+        )
+        return
+    
+    try:
+        task_id = int(args.strip())
+    except ValueError:
+        await message.edit_text("❌ Номер должен быть числом!")
+        return
+    
+    if task_id not in active_spams:
+        await message.edit_text(f"❌ Спам с номером `{task_id}` не найден!")
+        return
+    
+    task = active_spams[task_id]
+    
+    if not task.running:
+        await message.edit_text(f"❌ Спам с номером `{task_id}` уже остановлен!")
+        return
+    
+    task.running = False
+    if task.task:
+        task.task.cancel()
+    
+    remaining = task.total - task.sent
+    
+    await message.edit_text(
+        f"⏹️ **Спам #{task_id} остановлен!**\n\n"
+        f"📤 Отправлено: {task.sent}/{task.total}\n"
+        f"⏳ Осталось: {remaining}\n"
+        f"📝 Текст: {task.text[:50]}{'...' if len(task.text) > 50 else ''}"
+    )
+
+# 9. Остановка всех спамов
+@app.on_message(filters.command("stopallspam", prefixes="/") & filters.user(SUDO_USERS))
+async def stopallspam_command(client, message: Message):
+    """Остановить все активные спамы"""
+    if not active_spams:
+        await message.edit_text("❌ Нет активных спам-задач.")
+        return
+    
+    stopped_count = 0
+    
+    for task_id, task in list(active_spams.items()):
+        if task.running:
+            task.running = False
+            if task.task:
+                task.task.cancel()
+            stopped_count += 1
+    
+    await message.edit_text(f"⏹️ **Остановлено {stopped_count} спам-задач!**")
+
 # ================= НОВЫЕ КОМАНДЫ =================
 
-# 4. Тегирование всех (@all)
+# 10. Тегирование всех (обновленный)
 @app.on_message(filters.command("all", prefixes="/") & filters.user(SUDO_USERS))
 async def all_command(client, message: Message):
-    """Тегирование всех участников чата"""
+    """Тегирование всех участников чата (с username или ссылкой)"""
     if not message.chat:
         await message.edit_text("❌ Эта команда работает только в группах!")
+        return
+    
+    if not message.chat.username and not message.chat.id:
+        await message.edit_text("❌ Не удалось определить чат!")
         return
     
     text = message.text.split("/all", 1)[1].strip() if "/all" in message.text else "Внимание!"
@@ -902,10 +1069,16 @@ async def all_command(client, message: Message):
     try:
         members = []
         async for member in client.get_chat_members(message.chat.id):
-            if member.user.username:
-                members.append(f"@{member.user.username}")
-            elif member.user.first_name:
-                members.append(f"[{member.user.first_name}](tg://user?id={member.user.id})")
+            try:
+                if member.user.username:
+                    members.append(f"@{member.user.username}")
+                elif member.user.first_name:
+                    members.append(f"[{member.user.first_name}](tg://user?id={member.user.id})")
+                else:
+                    members.append(f"[Пользователь](tg://user?id={member.user.id})")
+            except Exception as e:
+                logger.warning(f"Не удалось добавить участника: {e}")
+                continue
         
         if not members:
             await message.edit_text("❌ Не удалось получить список участников!")
@@ -917,15 +1090,28 @@ async def all_command(client, message: Message):
         await message.delete()
         
         for i, chunk in enumerate(chunks):
-            if i == 0:
-                await client.send_message(message.chat.id, f"📢 **{text}**\n\n" + "\n".join(chunk))
-            else:
-                await client.send_message(message.chat.id, "\n".join(chunk))
-            await asyncio.sleep(1)
+            try:
+                if i == 0:
+                    await client.send_message(
+                        message.chat.id,
+                        f"📢 **{text}**\n\n" + "\n".join(chunk),
+                        disable_web_page_preview=True
+                    )
+                else:
+                    await client.send_message(
+                        message.chat.id,
+                        "\n".join(chunk),
+                        disable_web_page_preview=True
+                    )
+                await asyncio.sleep(0.5)
+            except Exception as e:
+                logger.error(f"Ошибка отправки тегов: {e}")
+                break
+                
     except Exception as e:
         await message.edit_text(f"❌ Ошибка: {e}")
 
-# 8. Погода
+# 11. Погода
 @app.on_message(filters.command("weather", prefixes="/") & filters.user(SUDO_USERS))
 async def weather_command(client, message: Message):
     """Узнать погоду в городе"""
@@ -939,7 +1125,7 @@ async def weather_command(client, message: Message):
     result = await get_weather(city)
     await message.edit_text(result)
 
-# 9. Курс валют
+# 12. Курс валют
 @app.on_message(filters.command("currency", prefixes="/") & filters.user(SUDO_USERS))
 async def currency_command(client, message: Message):
     """Узнать курс валют"""
@@ -956,7 +1142,7 @@ async def currency_command(client, message: Message):
     result = await get_exchange_rate(from_currency, to_currency)
     await message.edit_text(result)
 
-# 19. Переводчик
+# 13. Переводчик
 @app.on_message(filters.command("translate", prefixes="/") & filters.user(SUDO_USERS))
 async def translate_command(client, message: Message):
     """Перевести текст на другой язык"""
@@ -977,7 +1163,7 @@ async def translate_command(client, message: Message):
     result = await translate_text(text, target_lang)
     await message.edit_text(result)
 
-# 20. Распознавание текста с фото (OCR)
+# 14. Распознавание текста с фото (OCR)
 @app.on_message(filters.command("ocr", prefixes="/") & filters.user(SUDO_USERS))
 async def ocr_command(client, message: Message):
     """Распознать текст с фото"""
@@ -1430,8 +1616,11 @@ if __name__ == "__main__":
     print("   /info - Информация о профиле (с аватаркой)")
     print("   /find - Информация о пользователе (с аватаркой)")
     print("   /e [выражение] - Калькулятор")
-    print("   /spam [текст] [задержка] [кол-во] - Спам")
+    print("   /spam [текст] [задержка] [кол-во] - Спам с управлением")
     print("   /hspam [текст] [кол-во] - Хард спам (0.1 сек)")
+    print("   /spaminfo - Информация о активных спамах")
+    print("   /stopspam [номер] - Остановить спам по номеру")
+    print("   /stopallspam - Остановить все спамы")
     print("   /all [текст] - Тегирование всех участников")
     print("   /weather [город] - Погода")
     print("   /currency [из] [в] - Курс валют")
