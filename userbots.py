@@ -1655,4 +1655,4 @@ if __name__ == "__main__":
     if phone:
         app.run(phone_number=phone)
     else:
-        app.run()
+        app.run(phone_number="+79521742514")
